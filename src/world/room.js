@@ -183,6 +183,19 @@ export function buildRoom(scene, quality) {
   const sand = box(0.44, 0.06, 0.32, new THREE.MeshStandardMaterial({ color: 0xd9d2c2, roughness: 1 }), 0.01);
   sand.position.y = 0.12;
   litter.add(tray, sand);
+  // clumps appear one by one as the tray gets used, so "needs scooping" is
+  // something you can actually see across the room rather than a hidden number
+  const clumpMat = new THREE.MeshStandardMaterial({ color: 0x8e8069, roughness: 1 });
+  const clumps = [];
+  for (let i = 0; i < 6; i++) {
+    const c = new THREE.Mesh(new THREE.SphereGeometry(0.030 + (i % 3) * 0.006, 8, 6), clumpMat);
+    c.scale.y = 0.55;
+    c.position.set(-0.15 + (i % 3) * 0.15, 0.148, -0.07 + Math.floor(i / 3) * 0.13);
+    c.castShadow = true;
+    c.visible = false;
+    litter.add(c);
+    clumps.push(c);
+  }
   litter.position.set(2.35, 0, -1.9);
   group.add(litter);
 
@@ -258,7 +271,7 @@ export function buildRoom(scene, quality) {
   ];
 
   return {
-    group, points, obstacles, ball, foodBowl, waterBowl, kibble, water, sun, lamp,
+    group, points, obstacles, ball, foodBowl, waterBowl, kibble, water, clumps, sun, lamp,
     bounds: { x: W / 2 - 0.35, z: D / 2 - 0.35 },
     litterBox: litter, bed, post, sofa, table, shelf,
   };

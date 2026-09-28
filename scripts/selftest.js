@@ -2,6 +2,7 @@
 // Run with:  npm run selftest
 import * as THREE from 'three';
 import { Cat } from '../src/cat/cat.js';
+import { attachSupplies } from '../src/world/supplies.js';
 import { Brain } from '../src/ai/brain.js';
 import { POSES } from '../src/cat/poses.js';
 
@@ -38,11 +39,16 @@ const scene = new THREE.Scene();
 scene.add(cat.group);
 
 // every pose must animate without producing NaNs, with feet near their targets
-const world = {
+const world = attachSupplies({
   points: {}, obstacles: [], bounds: { x: 2.5, z: 2.0 },
   ball: { position: new THREE.Vector3(1, 0.035, 1), userData: { vel: new THREE.Vector3() } },
-  consumeFood() {},
-};
+  foodLevel: 1,
+  consumeFood(a) { this.foodLevel = Math.max(0, this.foodLevel - a); },
+  get foodAvailable() { return this.foodLevel > 0.02; },
+}, {
+  waterMesh: { visible: true, scale: { set() {} }, position: { y: 0 } },
+  clumps: Array.from({ length: 6 }, () => ({ visible: false })),
+});
 for (const name of ['sunspot', 'food', 'water', 'bed', 'post', 'litter', 'sofa', 'sill', 'shelf', 'table']) {
   world.points[name] = {
     pos: new THREE.Vector3(Math.random() * 2 - 1, 0, Math.random() * 2 - 1),
@@ -95,7 +101,8 @@ try {
     brain.update(1 / 60, {
       handPoint: new THREE.Vector3(0.5, 0, 0.5), petting: i % 3000 < 60,
       calling: false, laser: i % 5000 < 120 ? new THREE.Vector3(1, 0, 1) : null,
-      foodAvailable: i % 1200 < 600, ballMoving: false,
+      foodAvailable: world.foodAvailable, waterAvailable: world.waterAvailable,
+      litterClean: world.litterUsable, ballMoving: false,
     });
     cat.update(1 / 60, {});
     seen.add(brain.action.id);
@@ -105,6 +112,31 @@ check(!err, `brain soak 20k ticks${err ? ': ' + err.message : ''}`);
 check([...Object.values(brain.needs)].every((v) => v >= 0 && v <= 1), 'needs stay in [0,1]');
 check(seen.size >= 6, `exercised ${seen.size} behaviours: ${[...seen].join(', ')}`);
 check(Number.isFinite(cat.group.position.x), 'cat position finite after soak');
+
+// --- the human's chores: bowls empty, the tray fills up, and she says so ---
+check(world.waterLevel < 0.999, `water bowl drains as she drinks (${world.waterLevel.toFixed(2)} left)`);
+check(world.litterSoil > 0, `litter tray soils with use (${world.litterSoil.toFixed(2)})`);
+world.refillWater(); world.cleanLitter();
+check(world.waterAvailable && world.waterLevel === 1, 'Water button refills the bowl');
+check(world.litterUsable && world.litterSoil === 0, 'Scoop button empties the tray');
+check(world.clumps.every((c) => !c.visible), 'scooping also clears the visible clumps');
+world.setWater(0);
+world.setLitterSoil(1);
+check(!world.waterAvailable && !world.litterUsable, 'empty bowl / filthy tray are flagged');
+check(world.clumps.filter((c) => c.visible).length === world.clumps.length,
+  'a filthy tray shows every clump');
+let complained = null;
+brain.onComplaint = (what) => { complained = what; };
+brain.needs.thirst = 0.02;
+brain.begin('drink', { handPoint: new THREE.Vector3(0.5, 0, 0.5) });
+for (let i = 0; i < 4000 && complained !== 'water'; i++) {
+  brain.update(1 / 60, {
+    handPoint: new THREE.Vector3(0.5, 0, 0.5), foodAvailable: false,
+    waterAvailable: world.waterAvailable, litterClean: world.litterUsable,
+  });
+  cat.update(1 / 60, {});
+}
+check(complained === 'water', 'she walks to the empty bowl and complains about it');
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall good ✓');
 process.exit(failures ? 1 : 0);

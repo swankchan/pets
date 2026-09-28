@@ -67,6 +67,8 @@ export class Cortex {
       },
       room: {
         food_in_bowl: !!ctx.foodAvailable,
+        water_in_bowl: !!ctx.waterAvailable,
+        litter_tray: ctx.litterClean === false ? 'filthy, needs scooping' : 'clean enough',
         toy_ball_moving: !!ctx.ballMoving,
       },
       event: this.pendingEvent,

@@ -81,6 +81,14 @@ function spawnCat(coatKey) {
     brain = new Brain(cat, world);
     brain.events.addEventListener('vocalise', (e) => audio.vocalise(e.kind));
     cortex = new Cortex({ llm, brain, world, audio, onThought: showThought });
+    // she found an empty bowl / dirty tray: flag the button and tell the LLM
+    brain.onComplaint = (what) => {
+      const id = what === 'water' ? 'btn-water' : what === 'litter' ? 'btn-scoop' : 'btn-feed';
+      nudge(id);
+      cortex?.notify(what === 'water' ? 'my water bowl is completely empty'
+        : what === 'litter' ? 'my litter tray is disgusting and I refuse to use it'
+        : 'my food bowl is empty');
+    };
   }
   window.cat = cat; window.brain = brain; window.world = world;
 }
@@ -141,6 +149,18 @@ addEventListener('resize', () => {
 
 const btn = (id, fn) => document.getElementById(id).addEventListener('click', fn);
 btn('btn-feed', () => { audio.ensure(); world.refillFood(); flash('btn-feed'); cortex?.notify('the human just filled my food bowl'); });
+btn('btn-water', () => {
+  audio.ensure();
+  world.refillWater();
+  flash('btn-water');
+  cortex?.notify('the human just refilled my water bowl with fresh water');
+});
+btn('btn-scoop', () => {
+  audio.ensure();
+  world.cleanLitter();
+  flash('btn-scoop');
+  cortex?.notify('the human just scooped my litter tray clean');
+});
 btn('btn-toy', () => {
   audio.ensure();
   world.throwBall(state.handPoint, camera.position.clone().lerp(state.handPoint, 0.25).setY(0.9));
@@ -150,7 +170,13 @@ btn('btn-toy', () => {
 btn('btn-laser', () => toggleLaser());
 btn('btn-call', () => call());
 
+/** Keep a dock button pulsing until the human deals with it. */
+function nudge(id) {
+  const b = document.getElementById(id);
+  if (b) b.classList.add('nudge');
+}
 function flash(id) {
+  document.getElementById(id)?.classList.remove('nudge');
   const b = document.getElementById(id);
   b.classList.add('on');
   setTimeout(() => b.classList.remove('on'), 350);
@@ -173,6 +199,8 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const k = e.key.toLowerCase();
   if (k === 'f') { world.refillFood(); flash('btn-feed'); }
+  if (k === 'w') document.getElementById('btn-water').click();
+  if (k === 'c') document.getElementById('btn-scoop').click();
   if (k === 'l') toggleLaser();
   if (k === 't') document.getElementById('btn-toy').click();
   if (k === ' ') { e.preventDefault(); call(); }
@@ -308,7 +336,10 @@ function animate() {
       petting,
       calling: state.calling > 0,
       laser: state.laserOn ? world.laser : null,
-      foodAvailable: world.foodLevel > 0.02,
+      foodAvailable: world.foodAvailable,
+      waterAvailable: world.waterAvailable,
+      litterClean: world.litterUsable,
+      litterSoil: world.litterSoil,
       ballMoving: world.ballMoving,
       attention: world.ballMoving ? world.ball.position : null,
     };
@@ -326,7 +357,7 @@ function animate() {
       if (bubbleTimer <= 0) llmEl.bubble.classList.remove('show');
     }
     audio.setPurr(cat.purr);
-    hud.update(dt, brain, renderer);
+    hud.update(dt, brain, renderer, world);
 
     if (state.follow) {
       camTarget.lerp(cat.group.position.clone().setY(cat.group.position.y + 0.20), Math.min(1, dt * 1.6));

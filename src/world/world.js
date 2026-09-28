@@ -2,14 +2,15 @@
 // physics, the laser dot and the drifting sun patch.
 import * as THREE from 'three';
 import { buildRoom } from './room.js';
+import { attachSupplies } from './supplies.js';
 
 export class World {
   constructor(scene, quality) {
     Object.assign(this, buildRoom(scene, quality));
     this.scene = scene;
     this.foodLevel = 0.0;
-    this.waterLevel = 1.0;
     this.setFood(0);
+    attachSupplies(this, { waterMesh: this.water, clumps: this.clumps });
 
     // laser dot
     this.laserDot = new THREE.Mesh(
@@ -36,6 +37,8 @@ export class World {
 
   consumeFood(amount) { this.setFood(this.foodLevel - amount); }
   refillFood() { this.setFood(1); }
+
+  get foodAvailable() { return this.foodLevel > 0.02; }
 
   setLaser(point) {
     this.laser = point ? point.clone() : null;
@@ -78,6 +81,9 @@ export class World {
       b.rotation.z += v.x * dt * 12;
     }
     this.ballMoving = v.lengthSq() > 0.05;
+
+    // ---- the bowl slowly evaporates, so water is a chore and not a one-off ----
+    this.evaporate(dt);
 
     // ---- gentle sun drift so the warm patch moves across the floor ----
     this.sunT = (this.sunT || 0) + dt * 0.01;

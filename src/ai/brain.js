@@ -17,6 +17,7 @@ const LABEL = {
   litter: 'using the litter box', scratch: 'scratching the post', perch: 'watching the window',
   zoomies: 'ZOOMIES', beg: 'begging at the empty bowl', startled: 'startled!',
   sit: 'sitting and thinking', loaf: 'loafing',
+  nag: 'telling you something needs topping up',
 };
 
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -145,12 +146,28 @@ export class Brain {
     this.playTimer = 0;
   }
 
+  /**
+   * Walk up to the empty bowl / dirty tray and meow about it, instead of
+   * silently giving up (which is what made these chores invisible).
+   */
+  beginNagging(what, ctx) {
+    const P = this.world.points;
+    this.nagPoint = what === 'water' ? P.water : what === 'litter' ? P.litter : P.food;
+    this.nagAbout = what;
+    this.setAction('nag', this.nagPoint.stand, 10);
+    this.thought = what === 'water' ? 'my water bowl is empty'
+      : what === 'litter' ? 'this litter box needs scooping'
+      : 'my food bowl is empty';
+    if (this.onComplaint) this.onComplaint(what);
+  }
+
   beginAction(id, ctx) {
     const P = this.world.points;
     const cat = this.cat;
     switch (id) {
       case 'eat': this.setAction('eat', P.food.stand, 14); this.actionYaw = -Math.PI / 2; break;
       case 'drink': this.setAction('drink', P.water.stand, 9); this.actionYaw = -Math.PI / 2; break;
+      case 'nag': this.setAction('nag', (this.nagPoint || P.food).stand, 10); break;
       case 'beg': this.setAction('beg', P.food.stand, 10); this.actionYaw = -Math.PI / 2; break;
       case 'sleep': {
         const spots = [P.bed, P.sunspot, P.sofa, P.sill];
@@ -225,14 +242,35 @@ export class Brain {
           this.licking = true;
           this.lookAt = null;
           if (a.id === 'eat') {
-            if (!ctx.foodAvailable) { this.begin('groom', ctx); break; }
+            if (!ctx.foodAvailable) { this.beginNagging('food', ctx); break; }
             n.hunger = Math.min(1, n.hunger + sdt / 9);
             n.hygiene = Math.max(0, n.hygiene - sdt / 90);
             this.world.consumeFood(sdt / 9);
           } else {
+            if (!this.world.waterAvailable) { this.beginNagging('water', ctx); break; }
             n.thirst = Math.min(1, n.thirst + sdt / 7);
+            this.world.consumeWater(sdt / 22);
           }
           this.purrTarget = 0.3;
+        }
+        break;
+      }
+
+      case 'nag': {
+        // "your bowl is empty and I would like you to know about it"
+        const spot = this.nagPoint || P.food;
+        if (a.phase === 'go') {
+          if (this.arrive(a.target, 'walk')) { a.phase = 'do'; a.t = 0; }
+          this.lookAt = spot.pos;
+        } else {
+          cat.stop();
+          cat.pose = a.t % 6 < 3.2 ? 'sit' : 'stand';
+          this.lookAt = ctx.handPoint || spot.pos;
+          if (a.t - (a.lastMeow ?? -9) > 2.6) {
+            a.lastMeow = a.t;
+            this.say('meow');
+          }
+          if (a.t > a.dur) this.begin('wander', ctx);
         }
         break;
       }
@@ -299,12 +337,26 @@ export class Brain {
 
       case 'litter':
         if (a.phase === 'go') {
-          if (this.arrive(a.target, n.litter < 0.12 ? 'trot' : 'walk')) { a.phase = 'do'; a.t = 0; }
+          if (this.arrive(a.target, n.litter < 0.12 ? 'trot' : 'walk')) {
+            // A cat that finds a filthy tray does not use it: she complains,
+            // and if she is truly desperate she goes just outside it.
+            if (!this.world.litterUsable && n.litter > 0.06) {
+              this.beginNagging('litter', ctx);
+              break;
+            }
+            a.phase = 'do'; a.t = 0;
+            a.accident = !this.world.litterUsable;
+          }
         } else {
           cat.stop();
           cat.pose = a.t < 5 ? 'crouch' : 'sit';
           n.litter = Math.min(1, n.litter + sdt / 6);
           n.hygiene = Math.max(0, n.hygiene - sdt / 60);
+          if (!a.soiled && a.t > 4) {
+            a.soiled = true;
+            if (a.accident) { this.trust = Math.max(0, this.trust - 0.04); this.mood = 'unsettled'; }
+            else this.world.soilLitter(0.2);
+          }
           if (a.t > 7) this.begin('groom', ctx);
         }
         break;
