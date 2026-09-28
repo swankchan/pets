@@ -1,0 +1,21 @@
+{
+  "name": "pets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Realistic cat pet simulation — procedural cat, shell fur, IK locomotion, utility-AI behaviour.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "desktop": "electron electron/main.cjs",
+    "selftest": "node scripts/selftest.js"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.12.0",
+    "vite": "^7.0.0"
+  }
+}
