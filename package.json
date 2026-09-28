@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "desktop": "electron electron/main.cjs",
-    "selftest": "node scripts/selftest.js"
+    "selftest": "node scripts/selftest.js",
+    "llmtest": "node scripts/llmtest.js"
   },
   "dependencies": {
     "three": "0.186.1"

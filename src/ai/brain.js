@@ -42,6 +42,10 @@ export class Brain {
     this.events = new THREE.EventDispatcher();
     this.timeScale = 1;
     this.lastMeow = 0;
+    this.clock = 0;
+    this.llmBias = null;      // { action, weight, until } — set by the LLM cortex
+    this.llmThought = null;   // inner monologue from the LLM, shown in the HUD
+    this.purrBoost = 0;
     this._tmp = new THREE.Vector3();
   }
 
@@ -89,6 +93,10 @@ export class Brain {
     if (ctx.petting) s.pet = 2.4;
     if (ctx.calling) s.affection = Math.max(s.affection, 0.8 + this.trust * 1.2);
     if (ctx.ballMoving) s.play = Math.max(s.play, 1.1 + p.playful * 0.5);
+    // the LLM "cortex" nudges one behaviour; reflexes (petting, laser) still win
+    if (this.llmBias && this.llmBias.until > this.clock) {
+      s[this.llmBias.action] = (s[this.llmBias.action] || 0) + this.llmBias.weight;
+    }
     return s;
   }
 
@@ -96,6 +104,7 @@ export class Brain {
   update(dt, ctx) {
     const cat = this.cat, world = this.world;
     const sdt = dt * this.timeScale;
+    this.clock += dt;
     this.meowCooldown = Math.max(0, this.meowCooldown - dt);
     this.startle = Math.max(0, this.startle - dt * 0.8);
 
@@ -122,11 +131,21 @@ export class Brain {
     this.updateMood();
 
     cat.lookTarget = this.lookAt;
+    if (this.purrBoost > 0) { this.purrBoost -= dt; this.purrTarget = Math.max(this.purrTarget, 0.9); }
     cat.purr = THREE.MathUtils.lerp(cat.purr, this.purrTarget || 0, dt * 2);
     this.thought = LABEL[this.action.id] || this.action.id;
   }
 
   begin(id, ctx) {
+    try { this.beginAction(id, ctx); } catch (e) {
+      // never let a bad suggestion (e.g. from the LLM) stall the cat
+      console.warn('[brain] cannot start', id, e.message);
+      this.setAction('idle', null, 4);
+    }
+    this.playTimer = 0;
+  }
+
+  beginAction(id, ctx) {
     const P = this.world.points;
     const cat = this.cat;
     switch (id) {
@@ -159,7 +178,6 @@ export class Brain {
       default: this.setAction('idle', null, rnd(4, 9));
     }
     if (['sleep', 'perch'].includes(id) && this.action.target) this.action.phase = 'go';
-    this.playTimer = 0;
   }
 
   randomFloorPoint() {

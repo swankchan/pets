@@ -7,6 +7,8 @@ import { World } from './world/world.js';
 import { Brain } from './ai/brain.js';
 import { Hud } from './ui/hud.js';
 import { CatAudio } from './audio.js';
+import { LlamaBridge, DEFAULT_PERSONA } from './ai/llm.js';
+import { Cortex } from './ai/cortex.js';
 
 export const QUALITY = {
   low:    { shells: 4,  voxel: 0.0105, furDensity: 480,  shadowMap: 1024, texSize: 512,  extraShadows: false, pixelRatio: 1.0 },
@@ -63,6 +65,8 @@ const hud = new Hud();
 
 let cat = null;
 let brain = null;
+let cortex = null;
+const llm = new LlamaBridge();
 
 function spawnCat(coatKey) {
   const prevPos = cat ? cat.group.position.clone() : new THREE.Vector3(0.3, 0, 0.3);
@@ -76,6 +80,7 @@ function spawnCat(coatKey) {
   if (brain) { brain.cat = cat; } else {
     brain = new Brain(cat, world);
     brain.events.addEventListener('vocalise', (e) => audio.vocalise(e.kind));
+    cortex = new Cortex({ llm, brain, world, audio, onThought: showThought });
   }
   window.cat = cat; window.brain = brain; window.world = world;
 }
@@ -135,11 +140,12 @@ addEventListener('resize', () => {
 });
 
 const btn = (id, fn) => document.getElementById(id).addEventListener('click', fn);
-btn('btn-feed', () => { audio.ensure(); world.refillFood(); flash('btn-feed'); });
+btn('btn-feed', () => { audio.ensure(); world.refillFood(); flash('btn-feed'); cortex?.notify('the human just filled my food bowl'); });
 btn('btn-toy', () => {
   audio.ensure();
   world.throwBall(state.handPoint, camera.position.clone().lerp(state.handPoint, 0.25).setY(0.9));
   flash('btn-toy');
+  cortex?.notify('the human threw my toy ball across the room');
 });
 btn('btn-laser', () => toggleLaser());
 btn('btn-call', () => call());
@@ -154,11 +160,13 @@ function toggleLaser() {
   document.getElementById('btn-laser').classList.toggle('on', state.laserOn);
   if (!state.laserOn) world.setLaser(null);
   audio.ensure();
+  cortex?.notify(state.laserOn ? 'a red dot just appeared on the floor' : 'the red dot vanished');
 }
 function call() {
   audio.ensure();
   state.calling = 4;
   flash('btn-call');
+  cortex?.notify('the human is calling me by name');
 }
 
 addEventListener('keydown', (e) => {
@@ -168,7 +176,7 @@ addEventListener('keydown', (e) => {
   if (k === 'l') toggleLaser();
   if (k === 't') document.getElementById('btn-toy').click();
   if (k === ' ') { e.preventDefault(); call(); }
-  if (k === 'g') brain && brain.spook(1);
+  if (k === 'g') { brain && brain.spook(1); cortex?.notify('a sudden loud noise scared me'); }
 });
 
 document.getElementById('quality').addEventListener('change', (e) => {
@@ -201,6 +209,82 @@ function showLoading(msg, fn) {
   }));
 }
 
+
+// ------------------------------------------------------------------ local LLM
+const llmEl = {
+  dot: document.getElementById('llmdot'),
+  url: document.getElementById('llmurl'),
+  meta: document.getElementById('llmmeta'),
+  log: document.getElementById('llmlog'),
+  say: document.getElementById('llmsay'),
+  persona: document.getElementById('llmpersona'),
+  bubble: document.getElementById('bubble'),
+};
+llmEl.url.value = llm.baseUrl;
+llmEl.persona.value = llm.persona;
+
+llm.on((b) => {
+  llmEl.dot.className = b.status === 'off' ? '' : b.status;
+  const bits = [];
+  if (b.status === 'ready' || b.status === 'thinking') {
+    bits.push(b.model);
+    if (b.lastLatency) bits.push(`${(b.lastLatency / 1000).toFixed(1)}s`);
+    if (b.tokensPerSecond) bits.push(`${b.tokensPerSecond.toFixed(0)} tok/s`);
+    if (b.baseUrl === '/llm') bits.push('via proxy');
+  } else if (b.status === 'error') bits.push('連唔到：' + b.lastError);
+  else if (b.status === 'connecting') bits.push('連接緊…');
+  else bits.push('未連接 llama.cpp');
+  llmEl.meta.textContent = bits.join(' · ');
+});
+
+let bubbleTimer = 0;
+function showThought(text, action, userMessage) {
+  if (userMessage) addLog(userMessage, true);
+  addLog(text, false, action);
+  llmEl.bubble.textContent = text;
+  llmEl.bubble.classList.add('show');
+  bubbleTimer = 9;
+}
+function addLog(text, mine, action) {
+  const d = document.createElement('div');
+  if (mine) d.className = 'me';
+  d.innerHTML = (action ? `<b>${action}</b>` : '') + escapeHtml(text);
+  llmEl.log.appendChild(d);
+  while (llmEl.log.children.length > 24) llmEl.log.firstChild.remove();
+  llmEl.log.scrollTop = llmEl.log.scrollHeight;
+}
+const escapeHtml = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+document.getElementById('llmconnect').addEventListener('click', async () => {
+  llm.setUrl(llmEl.url.value.trim());
+  const ok = await llm.connect();
+  if (ok) {
+    addLog(`已連接 ${llm.model}`, false, 'system');
+    cortex?.notify('the human just switched my brain on');
+  }
+});
+document.getElementById('llmoff').addEventListener('click', () => llm.disconnect());
+document.getElementById('llmsavepersona').addEventListener('click', () => {
+  llm.setPersona(llmEl.persona.value);
+  addLog('人設已更新', false, 'system');
+});
+function sendMessage() {
+  const text = llmEl.say.value.trim();
+  if (!text) return;
+  llmEl.say.value = '';
+  audio.ensure();
+  if (!llm.enabled) { addLog('未連接 LLM — 撳 Connect 先', false, 'system'); return; }
+  state.calling = 2.5;
+  cortex.say(text);
+}
+document.getElementById('llmsend').addEventListener('click', sendMessage);
+llmEl.say.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') sendMessage();
+});
+llmEl.url.addEventListener('keydown', (e) => e.stopPropagation());
+llmEl.persona.addEventListener('keydown', (e) => e.stopPropagation());
+
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
 const camTarget = new THREE.Vector3(0, 0.22, 0);
@@ -217,7 +301,9 @@ function animate() {
     world.update(dt);
 
     const petting = state.petting && state.hoveringCat;
-    brain.update(dt, {
+    if (petting && !state.wasPetting) cortex?.notify('the human started stroking my back');
+    state.wasPetting = petting;
+    const brainCtx = {
       handPoint: state.handPoint,
       petting,
       calling: state.calling > 0,
@@ -225,8 +311,20 @@ function animate() {
       foodAvailable: world.foodLevel > 0.02,
       ballMoving: world.ballMoving,
       attention: world.ballMoving ? world.ball.position : null,
-    });
+    };
+    brain.update(dt, brainCtx);
+    cortex?.update(dt, brainCtx);
     cat.update(dt, { stalking: brain.stalking, licking: brain.licking });
+
+    // thought bubble follows the cat's head
+    if (bubbleTimer > 0) {
+      bubbleTimer -= dt;
+      const p = cat.headPosition().clone().setY(cat.headPosition().y + 0.14).project(camera);
+      llmEl.bubble.style.left = `${(p.x * 0.5 + 0.5) * innerWidth}px`;
+      llmEl.bubble.style.top = `${(1 - (p.y * 0.5 + 0.5)) * innerHeight}px`;
+      llmEl.bubble.style.display = p.z > 1 ? 'none' : 'block';
+      if (bubbleTimer <= 0) llmEl.bubble.classList.remove('show');
+    }
     audio.setPurr(cat.purr);
     hud.update(dt, brain, renderer);
 

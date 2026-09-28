@@ -90,6 +90,69 @@ npm run desktop      # Electron 視窗，已經強制用獨顯
 
 ---
 
+## 🧠 接本地 LLM（llama.cpp / Gemma 3n E4B）
+
+隻貓有兩層腦：**低層** utility AI（需求、步態、IK、物理）照舊跑 60fps；
+**高層** 就交俾你部本機 LLM —— 佢決定「而家做邊樣」同埋貓嘅內心獨白。
+LLM 慢、斷線、答錯 JSON 都唔會卡住模擬，隻貓會自己繼續生活。
+
+### 1. 開 llama-server
+
+```powershell
+llama-server -m .\models\gemma-3n-E4B-it-Q4_K_M.gguf ^
+  -ngl 99 -c 4096 -fa --jinja ^
+  --host 127.0.0.1 --port 8080
+```
+
+- `-ngl 99` 全部 layer 落 GPU（E4B Q4 大約 4.5GB，4070 12GB 好鬆動）
+- `--jinja` 用返 Gemma 自己嘅 chat template
+- 支援 `response_format: json_schema` 嘅新版 llama.cpp 會直接用 GBNF 鎖住輸出格式；
+  舊版返 400 嘅話，bridge 會自動 retry 一次唔帶 schema
+
+> 用 **Ollama**（`http://127.0.0.1:11434`）或者 **LM Studio**（`http://127.0.0.1:1234`）
+> 都得，一樣係 OpenAI 相容 endpoint，喺 UI 改個 URL 就搞掂。
+
+### 2. 喺遊戲入面連接
+
+左邊 **Local LLM brain** 面板 → 填 URL → 撳 **Connect**。綠燈 = 通。
+面板會顯示 model 名、每次推理秒數同 tok/s。
+
+- 下面個輸入格可以**同 Mochi 講嘢**（廣東話都得）。佢唔識講人話，
+  但會用行動同內心獨白回應你 —— 而且可以完全唔理你（貓嚟㗎嘛）。
+- 貓頭上會浮出對話泡顯示佢諗緊乜。
+- **人設 / persona** 可以自己改，例如「你係一隻好記仇嘅三歲貓，鍾意半夜跑酷」。
+
+### 3. 運作方式
+
+每隔約 12 秒，或者有事發生（你餵食、摸佢、叫佢、掟波、開鐳射、嚇親佢、同佢講嘢），
+會送一個約 400 字元嘅狀態快照俾 LLM：
+
+```json
+{"needs":{"hunger":0.18,"energy":0.72,...},"mood":"hungry","trust":0.46,
+ "personality":{"playful":0.8,...},"currently":"wander","where":"in the sun patch",
+ "human":{"distance_m":1.2,"petting_me":false,"calling_me":true,"laser_pointer_on":false},
+ "room":{"food_in_bowl":false,"toy_ball_moving":false},"event":"the human is calling me by name"}
+```
+
+LLM 只可以返呢個 schema：
+
+```json
+{"action":"beg","thought":"個碗空空如也，你係咪想餓死我？","vocalise":"meow","commit_seconds":15}
+```
+
+`action` 淨係接受 13 個白名單行為（eat / sleep / play / affection / perch / zoomies …），
+唔喺名單、亂答、或者連唔到 → 直接丟棄，utility AI 照計自己嘅分。
+中咗嘅 action 會喺評分度加 +1.4 權重並鎖住 `commit_seconds` 秒 ——
+所以 LLM 係「有影響力嘅建議」，唔係遙控器：你摸緊佢嗰陣，反射行為照樣蓋過 LLM。
+
+因為只係高層決策，**延遲唔緊要**：E4B 喺 4070 大約 1–2 秒出一個 JSON，
+呢段時間隻貓照樣行緊、舔緊毛、條尾照樣郁。
+
+測試：`npm run llmtest`（內建 mock llama-server，唔使真係開 model 都測到
+連線、JSON 解析、markdown fence、壞 schema fallback、斷線容錯）。
+
+---
+
 ## 專案結構
 
 ```
@@ -109,10 +172,13 @@ src/
     anim.js            IK、步態、尾巴物理、面部
     cat.js             移動、轉向、跳躍、避障
   ai/brain.js          需求、效用評分、行為狀態機
+  ai/llm.js            llama.cpp bridge（OpenAI 相容、JSON schema、容錯）
+  ai/cortex.js         LLM ↔ brain 接駁：狀態快照、施加建議、內心獨白
   world/               房間、傢俬、物理（波）、鐳射、貼圖
   ui/hud.js            HUD
 scripts/
   selftest.js          冇 GPU 都跑到嘅模擬層測試（npm run selftest）
+  llmtest.js           mock llama-server 測 LLM bridge（npm run llmtest）
   render.js            CPU 軟件渲染器，出 PNG 睇姿勢（node scripts/render.js sit out.png）
 ```
 
@@ -122,10 +188,12 @@ scripts/
 npm run dev        # dev server
 npm run build      # 出 dist/
 npm run selftest   # 幾何、蒙皮、IK、步態、AI soak test
+npm run llmtest    # LLM bridge（自帶 mock server）
 node scripts/render.js trot preview.png 1.9 0.15    # 離線渲染某個 pose
 ```
 
 ## 之後可以加
+- 用 LLM 嘅 vision（Gemma 3n 收得圖）去「睇」個場景截圖再反應
 - 第二隻貓同貓與貓之間嘅互動（互相理毛、搶位、打交）
 - 掉毛／打結／梳毛、指甲、季節換毛
 - 用 WebGPU compute 做真・毛髮 strand（而家係 shell 近似）
