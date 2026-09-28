@@ -2,6 +2,7 @@
 // alpha-cutting individual strands out of a procedural hash field, plus a
 // procedural mackerel-tabby coat driven by rest-pose object coordinates.
 import * as THREE from 'three';
+import { buildFaceDecal, FACE_BOX } from './facePaint.js';
 
 export const COATS = {
   tabby: {
@@ -34,6 +35,21 @@ export const COATS = {
   },
 };
 
+// Rest-pose anchors of the face, shared by the vertex and fragment stages.
+const FACE_GLSL = /* glsl */`
+  const vec3 NOSE_TIP = vec3(0.0, 0.2580, 0.4020);
+  const vec3 EYE_BALL = vec3(0.0220, 0.2810, 0.3930);
+  // The coat is only a few millimetres long on the mask of the face; leaving it
+  // at full length here buries the eyes, the nose and the painted mouth.
+  float faceFurScale(vec3 p) {
+    float dn = distance(p, NOSE_TIP);
+    float de = min(distance(p, EYE_BALL), distance(p, vec3(-EYE_BALL.x, EYE_BALL.yz)));
+    float s = mix(0.16, 1.0, smoothstep(0.024, 0.085, dn));
+    s = min(s, mix(0.12, 1.0, smoothstep(0.010, 0.042, de)));
+    return s;
+  }
+`;
+
 const COMMON_GLSL = /* glsl */`
   varying vec3 vRestPos;
   varying vec3 vRestNormal;
@@ -42,6 +58,9 @@ const COMMON_GLSL = /* glsl */`
   uniform float uDensity;
   uniform vec3 uUnder, uTop, uStripe, uBelly, uSocks;
   uniform float uStripes, uFluff, uTime, uWetness;
+  uniform sampler2D uFaceTex;
+  uniform vec4 uFaceBox;       // x0, y0, x1, y1 of the decal in rest space
+  uniform float uFaceAmt;
 
   float hash13(vec3 p) {
     p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -87,7 +106,7 @@ const VERT_BODY = /* glsl */`
   vRestNormal = restNormal;
   vec3 transformed = vec3(position);
   #ifdef USE_FUR_SHELL
-    float lenScale = uFurLength * (1.0 + 1.1 * uFluff);
+    float lenScale = uFurLength * (1.0 + 1.1 * uFluff) * faceFurScale(position);
     vec3 comb = normalize(vec3(0.0, -0.55, -1.0));
     comb = normalize(comb - restNormal * dot(comb, restNormal) * 0.85);
     float sway = sin(uTime * 1.7 + position.z * 9.0) * 0.12;
@@ -131,6 +150,18 @@ const FRAG_COLOR = /* glsl */`
   coat *= mix(0.42, 1.06, uShellT);              // ambient occlusion towards the skin
   coat *= mix(1.0, 0.72, uWetness);
 
+  // --- painted facial features ----------------------------------------
+  // Sampled unconditionally (implicit derivatives need uniform control flow),
+  // then masked to the front of the face so it cannot wrap onto the skull.
+  vec2 fuv = (p.xy - uFaceBox.xy) / (uFaceBox.zw - uFaceBox.xy);
+  vec4 face = texture2D(uFaceTex, clamp(fuv, 0.0, 1.0));
+  vec2 inBox = step(vec2(0.0), fuv) * step(fuv, vec2(1.0));
+  float faceMask = inBox.x * inBox.y
+    * smoothstep(0.08, 0.30, vRestNormal.z)
+    * smoothstep(0.330, 0.345, p.z)
+    * uFaceAmt;
+  coat = mix(coat, face.rgb * mix(0.62, 1.04, uShellT), face.a * faceMask);
+
   diffuseColor.rgb *= coat;
   diffuseColor.a *= alpha;
 `;
@@ -140,7 +171,20 @@ const FRAG_COLOR = /* glsl */`
  * @param {{shells:number, furLength:number, density:number}} cfg
  */
 export function createCoatMaterials(coat, cfg) {
+  const decal = buildFaceDecal(coat, cfg.faceRes || 512);
+  const faceTex = new THREE.DataTexture(decal.data, decal.size, decal.size, THREE.RGBAFormat);
+  faceTex.needsUpdate = true;
+  faceTex.minFilter = THREE.LinearMipmapLinearFilter;
+  faceTex.magFilter = THREE.LinearFilter;
+  faceTex.generateMipmaps = true;
+  faceTex.wrapS = faceTex.wrapT = THREE.ClampToEdgeWrapping;
+  faceTex.colorSpace = THREE.SRGBColorSpace;
+  faceTex.anisotropy = 4;
+
   const shared = {
+    uFaceTex: { value: faceTex },
+    uFaceBox: { value: new THREE.Vector4(FACE_BOX.x0, FACE_BOX.y0, FACE_BOX.x1, FACE_BOX.y1) },
+    uFaceAmt: { value: 1.0 },
     uFurLength: { value: cfg.furLength },
     uDensity: { value: cfg.density },
     uUnder: { value: coat.under.clone() },
@@ -174,7 +218,7 @@ export function createCoatMaterials(coat, cfg) {
     m.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, m.userData.uniforms);
       const def = isShell ? '#define USE_FUR_SHELL\n' : '';
-      shader.vertexShader = def + VERT_HEAD + shader.vertexShader
+      shader.vertexShader = def + VERT_HEAD + FACE_GLSL + shader.vertexShader
         .replace('#include <beginnormal_vertex>', VERT_NORMAL)
         .replace('#include <begin_vertex>', VERT_BODY);
       shader.fragmentShader = def + COMMON_GLSL + shader.fragmentShader.replace(
@@ -184,5 +228,6 @@ export function createCoatMaterials(coat, cfg) {
     mats.push(m);
   }
   mats.shared = shared;
+  mats.faceDecal = decal;
   return mats;
 }

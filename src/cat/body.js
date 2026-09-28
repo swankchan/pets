@@ -28,13 +28,20 @@ function bodyPrimitives(rest) {
   // neck & head
   cap(rest.chest.clone().add(v(0, 0.014, 0.028)), rest.neck, 0.042, 0.032, 0.036, 1.10);
   cap(rest.neck, rest.head.clone().add(v(0, -0.008, -0.018)), 0.033, 0.040, 0.028);
-  cap(rest.head.clone().add(v(0, 0.006, -0.014)), rest.head.clone().add(v(0, -0.004, 0.020)), 0.046, 0.042, 0.022, 1.06);
+  cap(rest.head.clone().add(v(0, 0.006, -0.016)), rest.head.clone().add(v(0, -0.004, 0.018)), 0.045, 0.040, 0.022, 1.18);
   // muzzle + chin
-  cap(rest.head.clone().add(v(0, -0.014, 0.012)), rest.muzzle.clone().add(v(0, 0.004, -0.008)), 0.028, 0.019, 0.015);
-  cap(rest.head.clone().add(v(0, -0.026, 0.010)), rest.muzzle.clone().add(v(0, -0.012, -0.020)), 0.020, 0.013, 0.014);
+  // the muzzle is a short blunt wedge that clearly steps out of the skull
+  cap(rest.head.clone().add(v(0, -0.014, 0.010)), rest.muzzle.clone().add(v(0, 0.0035, 0.0010)), 0.027, 0.0155, 0.013, 1.05);
+  cap(rest.head.clone().add(v(0, -0.028, 0.006)), rest.muzzle.clone().add(v(0, -0.0135, -0.014)), 0.0175, 0.0115, 0.012, 1.14);
+  // puffy whisker pads and a brow ridge: without them the face is a smooth
+  // blob and the painted features have nothing to sit on.
+  for (const s of [1, -1]) {
+    cap(v(s * 0.010, 0.2468, 0.3800), v(s * 0.015, 0.2462, 0.3930), 0.0125, 0.0105, 0.012);
+    cap(v(s * 0.014, 0.2900, 0.3760), v(s * 0.030, 0.2890, 0.3620), 0.0090, 0.0080, 0.016);
+  }
   for (const s of [1, -1]) {   // cheeks
-    cap(rest.head.clone().add(v(s * 0.026, -0.010, 0.004)), rest.head.clone().add(v(s * 0.020, -0.016, 0.026)),
-      0.020, 0.014, 0.018);
+    cap(rest.head.clone().add(v(s * 0.024, -0.010, 0.002)), rest.head.clone().add(v(s * 0.017, -0.017, 0.024)),
+      0.019, 0.013, 0.018, 1.10);
   }
 
   // tail
@@ -173,6 +180,48 @@ function skinGeometry(geo, rest) {
   geo.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex, 4));
   geo.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight, 4));
   return geo;
+}
+
+/**
+ * The rest-pose body SDF: negative inside, roughly metres outside.
+ * Exported so the eyes / nose can be planted exactly on the skull surface
+ * instead of being guessed at and ending up buried under it.
+ */
+export function makeBodyField(rest) {
+  return makeField(bodyPrimitives(rest));
+}
+
+/**
+ * Walk a ray from `from` along `dir` until the field crosses zero, then refine
+ * by bisection. Returns the distance travelled, or null if nothing was hit.
+ */
+export function raycastField(field, from, dir, maxDist = 0.25, step = 0.0015) {
+  let prevT = 0;
+  let prev = field(from.x, from.y, from.z);
+  for (let t = step; t <= maxDist; t += step) {
+    const d = field(from.x + dir.x * t, from.y + dir.y * t, from.z + dir.z * t);
+    if ((prev <= 0) !== (d <= 0)) {
+      let lo = prevT, hi = t;
+      for (let i = 0; i < 24; i++) {
+        const mid = (lo + hi) * 0.5;
+        const dm = field(from.x + dir.x * mid, from.y + dir.y * mid, from.z + dir.z * mid);
+        if ((prev <= 0) === (dm <= 0)) lo = mid; else hi = mid;
+      }
+      return (lo + hi) * 0.5;
+    }
+    prevT = t; prev = d;
+  }
+  return null;
+}
+
+/** Central-difference gradient of the field, normalised — the surface normal. */
+export function fieldNormal(field, x, y, z, h = 0.0008) {
+  const n = new THREE.Vector3(
+    field(x + h, y, z) - field(x - h, y, z),
+    field(x, y + h, z) - field(x, y - h, z),
+    field(x, y, z + h) - field(x, y, z - h),
+  );
+  return n.lengthSq() > 1e-18 ? n.normalize() : new THREE.Vector3(0, 0, 1);
 }
 
 /** @returns {THREE.BufferGeometry} skinned, ready for SkinnedMesh */

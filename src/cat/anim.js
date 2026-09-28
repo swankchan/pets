@@ -308,8 +308,8 @@ export class Animator {
     const open = Math.max(0, cur.eyeOpen * (1 - blinkAmt));
 
     f.lids.forEach(({ upper, lower }) => {
-      upper.rotation.x = lerp(0.62, -0.92, open);
-      lower.rotation.x = Math.PI + lerp(0.52, 1.20, open);
+      upper.rotation.x = lerp(0.60, -1.05, open);
+      lower.rotation.x = Math.PI + lerp(0.54, 1.02, open);
     });
     const pupil = Math.min(1, Math.max(0.05, cur.pupil * (ctx.lightAdapt ?? 1)));
     for (const eye of f.eyes) {
