@@ -4,3 +4,6 @@ dist/
 *.log
 release/
 .preview/
+
+# reference photos pulled in for modelling (third-party stock imagery)
+image-search/
